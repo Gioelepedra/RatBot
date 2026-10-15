@@ -20,6 +20,7 @@ from control_panel import ControlPanel
 from demo_controller import DemoController
 from gait_manager import GAITS, GaitManager
 from input_handler import InputHandler
+from kinematic_preview import KinematicPreview
 from rearing_pose import RearingPose
 from sitting_pose import SittingPose
 
@@ -46,7 +47,8 @@ class DemoModeTests(unittest.TestCase):
     def test_keyboard_movement_is_detected_while_held_and_clears_on_release(self):
         handler = InputHandler()
         for key, direction in ((pygame.K_w, 'f'), (pygame.K_a, 'l'),
-                               (pygame.K_s, 'b'), (pygame.K_d, 'r')):
+                               (pygame.K_s, 'b'), (pygame.K_d, 'r'),
+                               (pygame.K_q, 'fl_0.75'), (pygame.K_e, 'fr_0.75')):
             with self.subTest(key=key):
                 with patch.object(pygame.key, 'get_pressed', return_value=defaultdict(bool, {key: True})):
                     for _ in range(5):
@@ -64,15 +66,17 @@ class DemoModeTests(unittest.TestCase):
                 snapshots = {}
                 keys = {2: pygame.K_g} if switch_gait else {}
                 movements = [(pygame.K_w, 'f', 'FORWARD'), (pygame.K_a, 'l', 'LEFT'),
-                             (pygame.K_s, 'b', 'BACKWARD'), (pygame.K_d, 'r', 'RIGHT')]
+                             (pygame.K_s, 'b', 'BACKWARD'), (pygame.K_d, 'r', 'RIGHT'),
+                             (pygame.K_q, 'fl_0.75', 'FORWARD LEFT'),
+                             (pygame.K_e, 'fr_0.75', 'FORWARD RIGHT')]
                 for index, (key, _, _) in enumerate(movements):
                     start = 4 + index * 8
                     keys.update({n: key for n in range(start, start + 6)})
 
                 def events():
                     frame[0] += 1
-                    self.assertLessEqual(frame[0], 36)
-                    return [pygame.event.Event(pygame.QUIT)] if frame[0] == 36 else []
+                    self.assertLessEqual(frame[0], 52)
+                    return [pygame.event.Event(pygame.QUIT)] if frame[0] == 52 else []
 
                 def pressed():
                     return defaultdict(bool, {keys.get(frame[0]): True})
@@ -81,7 +85,8 @@ class DemoModeTests(unittest.TestCase):
 
                 def status(panel, window, gait, direction, count):
                     draw_status(panel, window, gait, direction, count)
-                    snapshots[frame[0]] = (gait, direction, count, robot.last_positions[:])
+                    snapshots[frame[0]] = (gait, direction, count, robot.last_positions[:],
+                                          rendered.call_args.args[1][:])
                     # Confirm the counter is rendered from commands, not elapsed GUI frames.
                     label = panel.fonts[23].render(f'Joint-command frames: {robot.command_frames}',
                                                   True, eth.TEXT_SECONDARY)
@@ -100,6 +105,8 @@ class DemoModeTests(unittest.TestCase):
                                                         side_effect=ControlPanel._text))
                 ticks = stack.enter_context(patch.object(GaitManager, 'tick', autospec=True,
                                                          side_effect=GaitManager.tick))
+                rendered = stack.enter_context(patch.object(KinematicPreview, 'render', autospec=True,
+                                                            side_effect=KinematicPreview.render))
                 result = self.run_gui(['--demo'])
                 gait = 'TROT_HIGH' if switch_gait else 'TROT'
                 trajectories = result['gait_manager'].current_trajectories[gait]
@@ -111,13 +118,56 @@ class DemoModeTests(unittest.TestCase):
                         sample = snapshots[start + 1 + offset]
                         self.assertEqual(sample[:3], (gait, direction, baseline + offset + 1))
                         self.assertEqual(sample[3], trajectories[direction][offset])
+                        self.assertEqual(sample[4], trajectories[direction][offset])
                     # Release sends one return-to-rest command, then the counter stays still.
                     self.assertEqual(snapshots[start + 6][1:3], (None, baseline + 6))
                     self.assertEqual(snapshots[start + 7][1:3], (None, baseline + 6))
+                    self.assertEqual(snapshots[start + 6][3], snapshots[start + 6][4])
+                    self.assertEqual(snapshots[start + 6][4], snapshots[start + 7][4])
                     self.assertIn(f'{label} — {gait}', [call.args[2] for call in text.call_args_list])
                 self.assertIn(f'IDLE — {gait}', [call.args[2] for call in text.call_args_list])
-                self.assertEqual(ticks.call_count, 20)
-                self.assertEqual(robot.command_frames, 25 + int(switch_gait))
+                self.assertEqual(ticks.call_count, 30)
+                self.assertEqual(robot.command_frames, 37 + int(switch_gait))
+
+    def test_gui_renders_intermediate_sitting_and_rearing_commands(self):
+        frame = [0]
+        clock = lambda: frame[0] * .25
+        robot = DemoController(clock=clock)
+        rendered = {}
+        downs = {2: pygame.K_p, 8: pygame.K_p, 14: pygame.K_u, 34: pygame.K_u}
+
+        def events():
+            frame[0] += 1
+            self.assertLessEqual(frame[0], 70)
+            if frame[0] == 70:
+                return [pygame.event.Event(pygame.QUIT)]
+            if frame[0] in downs:
+                return [pygame.event.Event(pygame.KEYDOWN, key=downs[frame[0]])]
+            if frame[0] - 1 in downs:
+                return [pygame.event.Event(pygame.KEYUP, key=downs[frame[0] - 1])]
+            return []
+
+        original_render = KinematicPreview.render
+
+        def render(preview, positions, name):
+            self.assertEqual(positions, robot.sample_positions())
+            rendered[frame[0]] = positions[:]
+            return original_render(preview, positions, name)
+
+        with patch('demo_controller.DemoController', return_value=robot), \
+             patch('sitting_pose.SittingPose', side_effect=lambda leg, bot: SittingPose(leg, bot, clock)), \
+             patch('rearing_pose.RearingPose', side_effect=lambda leg, bot: RearingPose(leg, bot, clock)), \
+             patch.object(pygame.event, 'get', side_effect=events), \
+             patch.object(pygame.key, 'get_pressed', return_value=defaultdict(bool)), \
+             patch.object(KinematicPreview, 'render', render):
+            self.run_gui(['--demo'])
+        self.assertNotEqual(rendered[2], rendered[3])  # Sitting transition, not a static image switch.
+        self.assertNotEqual(rendered[3], rendered[6])
+        self.assertNotEqual(rendered[14], rendered[15])  # Rearing entry.
+        self.assertNotEqual(rendered[34], rendered[35])  # Lowering.
+        for n in range(60, 70):
+            self.assertEqual(rendered[n], robot.last_positions)
+        self.assertEqual(robot.command_frames, 9)  # Startup, sit/stand, three entry + three exit.
 
     def test_demo_keyboard_gaits_poses_and_actions_never_touch_serial(self):
         for arguments in (['--demo'], ['mock-port', '--demo', '--debug']):
@@ -129,6 +179,8 @@ class DemoModeTests(unittest.TestCase):
                 frame = [0]
                 seen = []
                 statuses = {}
+                robot = DemoController(clock=lambda: frame[0] * 10)
+                stack.enter_context(patch('demo_controller.DemoController', return_value=robot))
                 keys = {n: pygame.K_g for n in range(1, 9)}
                 keys.update(dict(zip(range(9, 15), (pygame.K_w, pygame.K_s, pygame.K_a,
                                                     pygame.K_d, pygame.K_q, pygame.K_e))))
@@ -209,6 +261,53 @@ class DemoModeTests(unittest.TestCase):
         self.assertIsInstance(result['q8'], DemoController)
         self.assertFalse(result['q8'].torque_on)
 
+    def test_greeting_and_jump_render_every_frame_and_remain_exitable(self):
+        for key, name, frames, commands in ((pygame.K_h, 'GREETING', 146, 12),
+                                            (pygame.K_j, 'JUMP', 164, 6)):
+            for early_exit in (False, True):
+                with self.subTest(routine=name, early_exit=early_exit):
+                    frame = [0]
+                    robot = DemoController(clock=lambda: frame[0] * .05)
+                    samples = []
+                    end = 10 if early_exit else frames
+
+                    def events():
+                        frame[0] += 1
+                        self.assertLessEqual(frame[0], end)
+                        return [pygame.event.Event(pygame.QUIT)] if frame[0] == end else []
+
+                    def pressed():
+                        # Hold the routine key through completion: it must not restart.
+                        keys = defaultdict(bool, {key: True})
+                        if 4 <= frame[0] <= 8:
+                            keys[pygame.K_w] = True  # Walking must not interrupt the script.
+                        return keys
+
+                    original_render = KinematicPreview.render
+
+                    def render(preview, positions, label):
+                        samples.append(positions[:])
+                        self.assertEqual(positions, robot.sample_positions())
+                        return original_render(preview, positions, label)
+
+                    with patch('demo_controller.DemoController', return_value=robot), \
+                         patch.object(pygame.event, 'get', side_effect=events), \
+                         patch.object(pygame.key, 'get_pressed', side_effect=pressed), \
+                         patch.object(KinematicPreview, 'render', render), \
+                         patch('time.sleep') as sleep:
+                        self.run_gui(['--demo'])
+                    self.assertEqual(len(samples), end - 1)
+                    self.assertEqual(robot.routine.name, name)
+                    self.assertFalse(robot.torque_on)
+                    sleep.assert_called_once_with(2)  # Existing startup wait only.
+                    if early_exit:
+                        self.assertTrue(robot.routine_active)
+                        self.assertEqual(robot.command_frames, 2)
+                    else:
+                        self.assertFalse(robot.routine_active)
+                        self.assertEqual(robot.command_frames, commands)
+                        self.assertGreater(len({tuple(p) for p in samples}), 15)
+
     def test_without_demo_keeps_port_selection_and_hardware_controller(self):
         for arguments in ([], ['mock-port']):
             with self.subTest(arguments=arguments), \
@@ -216,9 +315,11 @@ class DemoModeTests(unittest.TestCase):
                  patch('helpers.XiaoPortFinder.validate', return_value=True) as validate, \
                  patch('espnow.q8_espnow', return_value=DemoController()) as hardware, \
                  patch('demo_controller.DemoController', side_effect=AssertionError('demo selected')), \
+                 patch('kinematic_preview.KinematicPreview', side_effect=AssertionError('demo renderer selected')), \
                  patch.object(pygame.event, 'get', return_value=[pygame.event.Event(pygame.QUIT)]):
                 result = self.run_gui(arguments)
                 self.assertFalse(result['control_panel'].demo)
+                self.assertIsNone(result['control_panel'].animation)
                 if arguments:
                     validate.assert_called_once_with('mock-port')
                     find.assert_not_called()

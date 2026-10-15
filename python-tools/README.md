@@ -15,7 +15,7 @@ python3 python-tools/ratbot/operate.py --demo
 
 Demo mode displays **DEMO MODE - NO HARDWARE CONNECTED** in the status bar.
 It skips serial detection and connection, even if a COM port is supplied.
-Movement, gait switching, sitting and rearing use the existing logic and previews;
+Movement, gait switching, sitting and rearing use the existing control logic;
 commands only update an in-memory controller. No battery telemetry or recorded
 hardware data is produced. Omit `--demo` to use the normal hardware connection.
 
@@ -24,7 +24,50 @@ the active direction and gait (for example, **FORWARD — TROT**), or **IDLE** w
 no gait movement is being commanded, including while a pose blocks movement.
 The live **Joint-command frames** counter counts calls accepted by the mock,
 including startup, walking, return-to-rest and pose commands; it is not a count
-of rendered GUI frames. The gait illustrations remain static.
+of rendered GUI frames.
+
+In demo mode the central panel animates all four legs from the eight angles sent
+to the mock controller, in FL/FR/BL/BR order. **Q/E** also animate the existing
+forward-turn commands. Zero-duration gait commands are displayed directly; timed
+sitting, rearing and lowering commands interpolate linearly between their angle
+targets over the supplied duration. This is a visualization of commands, not
+measured servo motion or a simulation of a motor's acceleration profile. On
+release, the existing return-to-rest command determines the displayed pose.
+Walking keeps the original fixed-chassis animation unchanged. Sitting and
+rearing add an illustrative kinematic contact model: rear feet anchor the body
+to the ground, with translation and a nose-up pitch derived from front/rear FK
+foot positions. Sitting levels both pairs of feet (front contacts may slide);
+rearing leaves the front feet free. Two rear contacts do not uniquely determine
+body orientation, so this pitch is a visualization convention, not a prediction
+of balance, stability, forces or physical body attitude. Contact is acquired and
+released smoothly over the first 5 mm of front/rear foot-depth difference;
+symmetric folded entry and the final symmetric rest use the original fixed-body
+view. The normal hardware GUI retains its static illustrations.
+
+**H** plays the complete greeting without blocking rendering or exit. The demo
+records the same `greet()` commands and waits into a schedule, including all
+three alternating waves and the return to rest. **J** replays the joint commands
+from `firmware/ratbot_robot/src/q8Dynamixel.cpp::jump()` and the angle pairs in
+its header: crouch `[-40, 220]` at 0.1 s (500 ms profile), extension `[90, 90]`
+at 1.2 s (zero profile), retraction `[30, 150]` at 1.3 s (zero profile), then
+idle `[30, 150]` at 6.4 s (500 ms profile). All pairs apply to all four legs.
+The firmware sequence finishes at 7.4 s; the demo then returns to the selected
+gait over 500 ms. Zero-profile targets display immediately because neither
+servo feedback nor a timed trajectory is available. No airborne trajectory,
+takeoff or landing dynamics is invented. The hardware GUI's original five-second
+jump wait and subsequent command remain unchanged; the demo waits for the full
+firmware schedule instead of guessing transport ordering during that routine.
+Demo scripts remain exitable, block competing motion, and do not repeat while
+H/J is held. No hardware trajectory, gain, timing or calibration is changed.
+
+The demo renderer (`ratbot/kinematic_preview.py`) consumes a link graph from
+`ratbot/leg_geometry.py`. Its Q8bot adapter uses the original 19.5 mm motor
+spacing, 25 mm upper links, 40 mm lower links and existing solver equations.
+For folded poses where the legacy FK starting estimate does not converge, the
+adapter retries those same equations with an outward starting estimate and
+checks link closure and assembly branch. A future mechanism can replace this
+adapter's `solve(q1, q2)` method and returned `LegGeometry` graph without changing
+the GUI or command handling.
 
 With the Pygame window focused, press **P** to toggle a static sitting pose:
 the front legs extend and the rear legs crouch over one second. Press **P**

@@ -12,6 +12,10 @@ class ControlPanel:
     def __init__(self, assets_dir, use_joystick=False, joystick_mapping=None, demo=False):
         self.fonts = {size: pygame.font.Font(None, size) for size in (18, 20, 23, 26, 32)}
         self.demo = demo
+        self.animation = None
+        if demo:
+            from kinematic_preview import KinematicPreview
+            self.animation = KinematicPreview()
         self.previews = {}
         for name in DESCRIPTIONS:
             try:
@@ -40,6 +44,15 @@ class ControlPanel:
         counter = self.fonts[23].render(f'Joint-command frames: {command_frames}',
                                       True, eth.TEXT_SECONDARY)
         window.blit(counter, (1240 - counter.get_width(), 652))
+
+    def draw_demo_robot(self, window, positions, gait, pose, routine=None):
+        if self.animation is not None and positions is not None:
+            name = preview_key(gait, pose.active, pose.POSE_NAME)
+            self.animation.body_mode = pose.POSE_NAME if pose.blocks_movement() else None
+            self.animation.routine_label = routine.name if routine is not None and routine.active else None
+            if self.animation.routine_label == 'GREETING':
+                self.animation.body_mode = 'REARING'
+            window.blit(self.animation.render(positions, name), (440, 158))
 
     def _make_controls(self, joystick, mapping):
         panel = pygame.Surface((398, 564))

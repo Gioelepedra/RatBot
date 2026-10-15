@@ -123,6 +123,7 @@ if not gait_manager.load_gait(gait_names[0]):
 
 time.sleep(2)
 
+demo_action_held = set()
 while True:
     clock.tick(SPEED)
     events = pygame.event.get()
@@ -131,6 +132,13 @@ while True:
             for event in events) or input_handler.is_action_pressed('exit')):
         break
 
+    demo_pressed = set()
+    if args.demo:
+        q8.update_routine()
+        held = {name for name in ('greet', 'jump') if input_handler.is_action_pressed(name)}
+        demo_pressed = held - demo_action_held
+        demo_action_held = held
+
     transition_error = rearing_pose.update()
     if transition_error:
         log.error(transition_error)
@@ -138,6 +146,8 @@ while True:
     # Consume both keys every frame so holding either never repeats a toggle.
     sit_pressed = input_handler.keyboard_action_pressed_once('sit', events)
     rear_pressed = input_handler.keyboard_action_pressed_once('rear', events)
+    if args.demo and q8.routine_active:
+        sit_pressed = rear_pressed = False
     if rear_pressed:
         if sitting_pose.blocks_movement():
             log.info('Press P to stand before rearing.')
@@ -179,7 +189,10 @@ while True:
     if not args.demo:
         pygame.display.flip()
 
-    if sitting_pose.blocks_movement() or rearing_pose.blocks_movement():
+    if args.demo and q8.routine_active:
+        # Continue rendering and accepting exit while a scripted demo plays.
+        pass
+    elif sitting_pose.blocks_movement() or rearing_pose.blocks_movement():
         # Keep the static pose; battery checks and exit remain available.
         if input_handler.is_action_pressed('battery'):
             q8.check_battery()
@@ -220,11 +233,14 @@ while True:
             q8.send_recover()
             time.sleep(2)
             move_xy(pos_x, pos_y, 1000)
-        elif input_handler.is_action_pressed('jump'):
+        elif ('jump' in demo_pressed if args.demo else input_handler.is_action_pressed('jump')):
             log.info("Jump")
-            q8.send_jump()
-            time.sleep(5)
-            move_xy(pos_x, pos_y, 500)
+            if args.demo:
+                q8.start_jump(list(leg.ik_solve(pos_x, pos_y, True, 1)[:2]) * 4)
+            else:
+                q8.send_jump()
+                time.sleep(5)
+                move_xy(pos_x, pos_y, 500)
         elif input_handler.is_action_pressed('switch_gait'):
             # Cycle to next gait
             gait_names.append(gait_names.pop(0))
@@ -253,11 +269,14 @@ while True:
             log.info("Show Range")
             show_range(q8)
             time.sleep(0.2)
-        elif input_handler.is_action_pressed('greet'):
+        elif ('greet' in demo_pressed if args.demo else input_handler.is_action_pressed('greet')):
             log.info("Greet")
-            greet(q8)
-            move_xy(pos_x, pos_y, 1000)  # Return to rest position
-            time.sleep(0.2)
+            if args.demo:
+                q8.start_greeting(list(leg.ik_solve(pos_x, pos_y, True, 1)[:2]) * 4)
+            else:
+                greet(q8)
+                move_xy(pos_x, pos_y, 1000)  # Return to rest position
+                time.sleep(0.2)
         elif input_handler.is_action_pressed('exit'):
             break
 
@@ -274,6 +293,8 @@ while True:
     if args.demo:
         # Render after processing input so release/pose blocking shows IDLE immediately.
         direction = gait_manager.get_current_direction() if movement and gait_manager.is_moving() else None
+        control_panel.draw_demo_robot(window, q8.sample_positions(), gait_manager.current_gait, display_pose,
+                                      q8.routine)
         control_panel.draw_demo_status(window, gait_manager.current_gait, direction, q8.command_frames)
         pygame.display.flip()
 

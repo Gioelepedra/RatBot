@@ -40,18 +40,20 @@ def show_range(q8):
     return
 
 
-def greet(q8):
+def greet(q8, wait=None):
+    # Demo records this same sequence with a virtual wait; hardware still sleeps.
+    wait = time.sleep if wait is None else wait
     q8.move_all(G1, 1000, False)
-    time.sleep(1.1)
+    wait(1.1)
     q8.move_all(G2, 1000, False)
-    time.sleep(1)
+    wait(1)
     q8.move_all(G3, 500, False)
-    time.sleep(1)
+    wait(1)
     for _ in range(3):
         q8.move_all(G4, 200, False)
-        time.sleep(0.25)
+        wait(0.25)
         q8.move_all(G5, 200, False)
-        time.sleep(0.25)
-    time.sleep(0.75)
+        wait(0.25)
+    wait(0.75)
     q8.move_all(G6, 500, False)
-    time.sleep(0.7)
+    wait(0.7)
