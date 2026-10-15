@@ -9,8 +9,9 @@ WINDOW_SIZE = (1280, 800)
 
 
 class ControlPanel:
-    def __init__(self, assets_dir, use_joystick=False, joystick_mapping=None):
+    def __init__(self, assets_dir, use_joystick=False, joystick_mapping=None, demo=False):
         self.fonts = {size: pygame.font.Font(None, size) for size in (18, 20, 23, 26, 32)}
+        self.demo = demo
         self.previews = {}
         for name in DESCRIPTIONS:
             try:
@@ -25,6 +26,20 @@ class ControlPanel:
 
     def _text(self, surface, text, size, color, xy):
         surface.blit(self.fonts[size].render(text, True, color), xy)
+
+    def draw_demo_status(self, window, gait, direction, command_frames):
+        """Show commanded movement and the mock's cumulative joint-frame count."""
+        directions = {'f': 'FORWARD', 'b': 'BACKWARD', 'l': 'LEFT', 'r': 'RIGHT',
+                      'fl': 'FORWARD LEFT', 'fr': 'FORWARD RIGHT',
+                      'bl': 'BACKWARD LEFT', 'br': 'BACKWARD RIGHT'}
+        name = directions.get(direction.split('_')[0], direction.upper()) if direction else 'IDLE'
+        # Replace the selected-gait caption, leaving poses and the safety banner visible.
+        pygame.draw.rect(window, eth.BACKGROUND, (440, 644, 800, 32))
+        self._text(window, f'{name} — {gait}', 26,
+                   eth.ACCENT if direction else eth.TEXT_SECONDARY, (444, 652))
+        counter = self.fonts[23].render(f'Joint-command frames: {command_frames}',
+                                      True, eth.TEXT_SECONDARY)
+        window.blit(counter, (1240 - counter.get_width(), 652))
 
     def _make_controls(self, joystick, mapping):
         panel = pygame.Surface((398, 564))
@@ -87,3 +102,6 @@ class ControlPanel:
                        eth.TEXT_ON_ACCENT if selected else eth.TEXT_MUTED, (x + 14, y + 6))
         pygame.draw.rect(window, eth.STATUS_BAR, (0, 754, 1280, 46))
         self._text(window, pose.label(), 26, eth.TEXT_ON_ACCENT, (24, 767))
+        if self.demo:
+            label = self.fonts[23].render('DEMO MODE - NO HARDWARE CONNECTED', True, eth.TEXT_ON_ACCENT)
+            window.blit(label, (window.get_width() - label.get_width() - 24, 770))

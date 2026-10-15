@@ -12,6 +12,7 @@ import argparse
 import os
 from kinematics_solver import k_solver
 from espnow import q8_espnow
+from demo_controller import DemoController
 from helpers import XiaoPortFinder, Q8Logger
 from gait_manager import GaitManager, GAITS
 from routine_generator import show_range, greet
@@ -41,6 +42,7 @@ def move_xy(x, y, dur = 0, deg = True):
 parser = argparse.ArgumentParser(description='RatBot control script')
 parser.add_argument('com_port', nargs='?', help='COM port for ESP32C3 (optional, auto-detect if not provided)')
 parser.add_argument('--debug', action='store_true', help='Enable debug logging')
+parser.add_argument('--demo', action='store_true', help='Run the GUI without connecting to hardware (ignores COM port)')
 args = parser.parse_args()
 
 # Initialize logger
@@ -53,7 +55,10 @@ record = False
 request = "none"
 
 # Find a serial port and connect
-if args.com_port:
+if args.demo:
+    # Demo takes precedence even when a port was explicitly supplied.
+    com_port = None
+elif args.com_port:
     # User provided a COM port
     com_port = args.com_port
     if not XiaoPortFinder.validate(com_port):
@@ -91,12 +96,12 @@ def get_resource_path(relative_path):
     return os.path.join(base_path, relative_path)
 
 control_panel = ControlPanel(get_resource_path(os.path.join('docs', 'poses')),
-                             use_joystick, joystick_mapping)
+                             use_joystick, joystick_mapping, demo=args.demo)
 log.info('Controls ready. G: switch gait. P: sit / stand. U: rear / lower.')
 
 # Initialize kinamatics solver and Q8bot ESPNow instance
 leg = k_solver(CENTER_DIST, L1, L2, L1, L2)
-q8 = q8_espnow(com_port)
+q8 = DemoController() if args.demo else q8_espnow(com_port)
 sitting_pose = SittingPose(leg, q8)
 rearing_pose = RearingPose(leg, q8)
 q8.enable_torque()
@@ -171,7 +176,8 @@ while True:
     display_pose = rearing_pose if rearing_pose.blocks_movement() else sitting_pose
     control_panel.draw(window, gait_manager.current_gait, display_pose)
     Q8Logger.render_pygame_messages()  # Draw logger on top
-    pygame.display.flip()
+    if not args.demo:
+        pygame.display.flip()
 
     if sitting_pose.blocks_movement() or rearing_pose.blocks_movement():
         # Keep the static pose; battery checks and exit remain available.
@@ -264,6 +270,12 @@ while True:
                 request = "none"
     except (ValueError, UnicodeError):
         log.debug("Data reading failed. Continuing...")
+
+    if args.demo:
+        # Render after processing input so release/pose blocking shows IDLE immediately.
+        direction = gait_manager.get_current_direction() if movement and gait_manager.is_moving() else None
+        control_panel.draw_demo_status(window, gait_manager.current_gait, direction, q8.command_frames)
+        pygame.display.flip()
 
 q8.disable_torque()
 if joystick:

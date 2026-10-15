@@ -6,6 +6,26 @@ Python control software for the RatBot quadruped, based on the Q8bot python-tool
 
 See [Software Setup](../docs/instructions/software_setup.md) for details on running from source.
 
+To try the existing GUI and controls without a robot or ESP32C3, run from the
+repository root with the Python dependencies installed:
+
+```bash
+python3 python-tools/ratbot/operate.py --demo
+```
+
+Demo mode displays **DEMO MODE - NO HARDWARE CONNECTED** in the status bar.
+It skips serial detection and connection, even if a COM port is supplied.
+Movement, gait switching, sitting and rearing use the existing logic and previews;
+commands only update an in-memory controller. No battery telemetry or recorded
+hardware data is produced. Omit `--demo` to use the normal hardware connection.
+
+Hold **W/A/S/D** to command forward/left/backward/right movement. The demo shows
+the active direction and gait (for example, **FORWARD — TROT**), or **IDLE** when
+no gait movement is being commanded, including while a pose blocks movement.
+The live **Joint-command frames** counter counts calls accepted by the mock,
+including startup, walking, return-to-rest and pose commands; it is not a count
+of rendered GUI frames. The gait illustrations remain static.
+
 With the Pygame window focused, press **P** to toggle a static sitting pose:
 the front legs extend and the rear legs crouch over one second. Press **P**
 again to return to the selected gait's resting position. Holding P does not
